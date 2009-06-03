@@ -98,7 +98,7 @@ my %font_tables = (
     'feat' => ['DROP'],
     'morx' => ['DROP'],
     'prop' => ['DROP'],
-    # Undocumented(?) extension for some kind of maths stuff (duh)
+    # Undocumented(?) extension for some kind of maths stuff
     'MATH' => ['DROP'],
 );
 
@@ -148,60 +148,6 @@ sub read_tables {
         $font->{$_}->read if $font->{$_};
     }
 }
-
-=pod
-# Return true if it's possible for the GSUB table to ever apply,
-# given the restricted list of wanted glyphs
-sub gsub_can_match {
-    my ($self, $lookup, $sub) = @_;
-
-    for (keys %{$sub->{COVERAGE}{val}}) {
-        return 0 if not $self->{wanted_glyphs}{$_};
-    }
-
-    if ($sub->{MATCH_TYPE}) {
-        if ($sub->{MATCH_TYPE} eq 'g') {
-            # RULES->MATCH/PRE/POST are arrays of glyphs that must all match
-            for (@{$sub->{RULES}}) {
-                for (@$_) {
-                    for my $c (qw(MATCH PRE POST)) {
-                        next unless $_->{$c};
-                        for (@{$_->{$c}}) {
-                            return 0 if not $self->{wanted_glyphs}{$_};
-                        }
-                    }
-                }
-            }
-        } elsif ($sub->{MATCH_TYPE} eq 'o') {
-            # RULES->MATCH/PRE/POST are arrays of coverage tables,
-            # and at least one glyph from each table must match
-            die unless @{$sub->{RULES}} == 1;
-            die unless @{$sub->{RULES}[0]} == 1;
-            for my $c (qw(MATCH PRE POST)) {
-                next unless $sub->{RULES}[0][0]{$c};
-                for (@{$sub->{RULES}[0][0]{$c}}) {
-                    my $matched = 0;
-                    for (keys %{$_->{val}}) {
-                        if ($self->{wanted_glyphs}{$_}) {
-                            $matched = 1;
-                            last;
-                        }
-                    }
-                    return 0 if not $matched;
-                }
-            }
-        }
-    }
-
-    # TODO: should look at $sub->{CLASS, PRE_CLASS, POST_CLASS}
-    # and if all RULEs refer to at least one class that contains a
-    # unwanted glyph, then reject this subtable.
-    # But I haven't bothered with that yet, so conservatively
-    # accept this subtable instead.
-
-    return 1;
-}
-=cut
 
 sub find_codepoint_glyph_mappings {
     my ($self) = @_;
@@ -301,7 +247,7 @@ sub find_wanted_glyphs {
 
             for my $lookup (@{$font->{GSUB}{LOOKUP}}) {
                 for my $sub (@{$lookup->{SUB}}) {
-                 
+
                     # Handle the glyph-delta case
                     if ($sub->{ACTION_TYPE} eq 'o') {
                         my $adj = $sub->{ADJUST};
@@ -1005,7 +951,6 @@ sub fix_gsub {
                             # XXX: This is a really horrid hack.
                             # The proper solution is to delete the ruleset,
                             # and adjust COVERAGE to match.
-                            warn "XXX";
                             push @rules, { ACTION => [0], MATCH => [-1] };
                         }
                         $sub->{RULES}[$i] = \@rules;
@@ -1170,17 +1115,17 @@ sub change_name {
     my $font = $self->{font};
 
     for (1,3,4,6) {
-    my $str = $font->{name}{strings}[$_];
-    for my $plat (0..$#$str) {
-        next unless $str->[$plat];
-        for my $enc (0..$#{$str->[$plat]}) {
-            next unless $str->[$plat][$enc];
-            for my $lang (keys %{$str->[$plat][$enc]}) {
-                next unless exists $str->[$plat][$enc]{$lang};
-                $str->[$plat][$enc]{$lang} = "$uid - subset of " . $str->[$plat][$enc]{$lang};
+        my $str = $font->{name}{strings}[$_];
+        for my $plat (0..$#$str) {
+            next unless $str->[$plat];
+            for my $enc (0..$#{$str->[$plat]}) {
+                next unless $str->[$plat][$enc];
+                for my $lang (keys %{$str->[$plat][$enc]}) {
+                    next unless exists $str->[$plat][$enc]{$lang};
+                    $str->[$plat][$enc]{$lang} = "$uid - subset of " . $str->[$plat][$enc]{$lang};
+                }
             }
         }
-    }
     }
 }
 
@@ -1234,13 +1179,11 @@ sub subset {
     $self->fix_hdmx if $font->{hdmx};
     $self->fix_kern if $font->{kern};
     $self->fix_ltsh if $font->{LTSH};
-    
+
     $self->fix_maxp; # Must come after loca, prep, fpgm
     $self->fix_os_2; # Must come after cmap, hmtx, hhea, GPOS, GSUB
 
     $self->change_name($uid);
-
-#    print "# got glyphs @{$font->{post}{VAL}}\n";
 
     $self->{num_glyphs_new} = $font->{maxp}{numGlyphs};
 }
@@ -1274,4 +1217,3 @@ sub release {
 }
 
 1;
-

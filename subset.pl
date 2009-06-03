@@ -16,43 +16,47 @@ Usage:
   $0 [options] [inputfile.ttf] [outputfile.ttf]
 
 Options:
-  --chars=STRING     characters to include in the subset (defaults to "test")
+  --chars=STRING    characters to include in the subset (defaults to "test")
+  --verbose, -v     print various details about the font and the subsetting
 EOF
     exit 1;
 }
 
 sub main {
+    my $verbose = 0;
     my $chars = "test";
 
     my $result = GetOptions(
-        'chars' => \$chars,
+        'chars=s' => \$chars,
+        'verbose' => \$verbose,
     ) or help();
 
     @ARGV == 2 or help();
 
     my ($input_file, $output_file) = @ARGV;
 
-    process($input_file, $output_file, $chars);
+    process($input_file, $output_file, $chars, $verbose);
 }
 
 sub process {
-    my ($input_file, $output_file, $chars) = @_;
+    my ($input_file, $output_file, $chars, $verbose) = @_;
 
-    dump_sizes($input_file);
-
-    print "Generating subsetted font...\n\n";
+    if ($verbose) {
+        dump_sizes($input_file);
+        print "Generating subsetted font...\n\n";
+    }
 
     my $subsetter = new Font::Subsetter();
     $subsetter->subset($input_file, $chars);
     $subsetter->write($output_file);
 
-    print "\n";
-
-    print "Included glyphs:\n  ";
-    print join ' ', $subsetter->glyph_names();
-    print "\n\n";
-
-    dump_sizes($output_file);
+    if ($verbose) {
+        print "\n";
+        print "Included glyphs:\n  ";
+        print join ' ', $subsetter->glyph_names();
+        print "\n\n";
+        dump_sizes($output_file);
+    }
 
     $subsetter->release();
 }

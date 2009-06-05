@@ -16,8 +16,12 @@ Usage:
   $0 [options] [inputfile.ttf] [outputfile.ttf]
 
 Options:
-  --chars=STRING    characters to include in the subset (defaults to "test")
-  --verbose, -v     print various details about the font and the subsetting
+  --chars=STRING        characters to include in the subset (defaults to "test")
+  --verbose, -v         print various details about the font and the subsetting
+  --include=FEATURES    comma-separate list of feature tags to include
+                        (all others will be excluded by default)
+  --exclude=FEATURES    comma-separate list of feature tags to exclude
+                        (all others will be included by default)
 EOF
     exit 1;
 }
@@ -25,29 +29,37 @@ EOF
 sub main {
     my $verbose = 0;
     my $chars = "test";
+    my $include;
+    my $exclude;
 
     my $result = GetOptions(
         'chars=s' => \$chars,
         'verbose' => \$verbose,
+        'include=s' => \$include,
+        'exclude=s' => \$exclude,
     ) or help();
 
     @ARGV == 2 or help();
 
     my ($input_file, $output_file) = @ARGV;
 
-    process($input_file, $output_file, $chars, $verbose);
-}
-
-sub process {
-    my ($input_file, $output_file, $chars, $verbose) = @_;
 
     if ($verbose) {
         dump_sizes($input_file);
         print "Generating subsetted font...\n\n";
     }
 
+    my $features;
+    if ($include) {
+        $features = { DEFAULT => 0 };
+        $features->{$_} = 1 for split /,/, $include;
+    } elsif ($exclude) {
+        $features = { DEFAULT => 1 };
+        $features->{$_} = 0 for split /,/, $exclude;
+    }
+
     my $subsetter = new Font::Subsetter();
-    $subsetter->subset($input_file, $chars);
+    $subsetter->subset($input_file, $chars, $features);
     $subsetter->write($output_file);
 
     if ($verbose) {

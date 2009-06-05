@@ -209,6 +209,59 @@ sub expand_wanted_chars {
     return %cs;
 }
 
+sub want_feature {
+    my ($self, $feature) = @_;
+    # If no feature list was specified, accept all features
+    return 1 if not $self->{features};
+    # Otherwise find the four-character tag
+    $feature =~ /^(\w{4})( _\d+)?$/ or die "Unrecognised feature tag syntax '$feature'";
+    return $self->{features}{$1} if exists $self->{features}{$1};
+    return $self->{features}{DEFAULT} if exists $self->{features}{DEFAULT};
+    return 1;
+}
+
+sub find_wanted_lookup_ids {
+    my ($self, $table) = @_;
+
+    # return 0..$#{$table->{LOOKUP}};
+
+    my %lookups;
+    for my $feat_tag (@{$table->{FEATURES}{FEAT_TAGS}}) {
+        next if not $self->want_feature($feat_tag);
+        for (@{$table->{FEATURES}{$feat_tag}{LOOKUPS}}) {
+            $lookups{$_} = 1;
+        }
+    }
+
+    # Iteratively add any chained lookups
+    my $changed = 1;
+    while ($changed) {
+        $changed = 0;
+        for my $lookup_id (0..$#{$table->{LOOKUP}}) {
+            next unless $lookups{$lookup_id};
+            my $lookup = $table->{LOOKUP}[$lookup_id];
+            for my $sub (@{$lookup->{SUB}}) {
+                if ($sub->{ACTION_TYPE} eq 'l') {
+                    for my $rule (@{$sub->{RULES}}) {
+                        for my $chain (@$rule) {
+                            for my $action (@{$chain->{ACTION}}) {
+                                for (0..@$action/2-1) {
+                                    # action is array of (offset, lookup)
+                                    $changed = 1 if not $lookups{$action->[$_*2+1]};
+                                    $lookups{$action->[$_*2+1]} = 1;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    my @keys = sort { $a <=> $b } keys %lookups;
+    return @keys;
+}
+
 sub find_wanted_glyphs {
     my ($self, $chars) = @_;
     my $font = $self->{font};
@@ -245,7 +298,8 @@ sub find_wanted_glyphs {
             # TODO: There's probably loads of bugs in here, so it
             # should be checked and tested more
 
-            for my $lookup (@{$font->{GSUB}{LOOKUP}}) {
+            for my $lookup_id ($self->find_wanted_lookup_ids($font->{GSUB})) {
+                my $lookup = $font->{GSUB}{LOOKUP}[$lookup_id];
                 for my $sub (@{$lookup->{SUB}}) {
 
                     # Handle the glyph-delta case
@@ -673,19 +727,102 @@ sub fix_gdef {
             delete $font->{GDEF}{LIG};
         }
     }
- 
+
+}
+
+sub fix_ttopen {
+    my ($self, $table, $inner) = @_;
+
+    my @lookups;
+    my %lookup_map;
+    for my $lookup_id ($self->find_wanted_lookup_ids($table)) {
+        my $lookup = $table->{LOOKUP}[$lookup_id];
+        my @subtables;
+        for my $sub (@{$lookup->{SUB}}) {
+            if ($inner->($lookup, $sub)) {
+                push @subtables, $sub;
+            }
+        }
+
+        # Only keep lookups that have some subtables
+        if (@subtables) {
+            $lookup->{SUB} = \@subtables;
+            push @lookups, $lookup;
+            $lookup_map{$lookup_id} = $#lookups;
+        }
+    }
+
+    $table->{LOOKUP} = \@lookups;
+
+    # Update lookup references inside actions
+    for my $lookup (@{$table->{LOOKUP}}) {
+        for my $sub (@{$lookup->{SUB}}) {
+            if ($sub->{ACTION_TYPE} eq 'l') {
+                for my $rule (@{$sub->{RULES}}) {
+                    for my $chain (@$rule) {
+                        my @actions;
+                        for my $action (@{$chain->{ACTION}}) {
+                            my @steps;
+                            for (0..@$action/2-1) {
+                                # action is array of (offset, lookup)
+                                # so just update the lookup
+                                if (exists $lookup_map{$action->[$_*2+1]}) {
+                                    push @steps, ($action->[$_*2], $lookup_map{$action->[$_*2+1]});
+                                }
+                            }
+                            push @actions, \@steps;
+                        }
+                        $chain->{ACTION} = \@actions;
+                    }
+                }
+            }
+        }
+    }
+    
+    # Remove all features that are not wanted
+    # and update all references to those features (in the languages list),
+    # and update the features' lookup references
+
+    my @features; # array of [tag, feature]
+    my %kept_features;
+    for my $feat_tag (@{$table->{FEATURES}{FEAT_TAGS}}) {
+        next unless $self->want_feature($feat_tag); # drop unwanted features
+        my $feat = $table->{FEATURES}{$feat_tag};
+        $feat->{LOOKUPS} = [ map { exists $lookup_map{$_} ? ($lookup_map{$_}) : () } @{$feat->{LOOKUPS}} ];
+        next unless @{$feat->{LOOKUPS}}; # drop empty features to save some space
+        push @features, [ $feat_tag, $feat ];
+        $kept_features{$feat_tag} = 1;
+    }
+
+    $table->{FEATURES} = {
+        FEAT_TAGS => [map $_->[0], @features],
+        map +($_->[0] => $_->[1]), @features,
+    };
+
+    # Remove any references from scripts to features that no longer exist
+    for my $script_tag (keys %{$table->{SCRIPTS}}) {
+        my $script = $table->{SCRIPTS}{$script_tag};
+        for my $tag ('DEFAULT', @{$script->{LANG_TAGS}}) {
+            next if $script->{$tag}{' REFTAG'}; # ignore langs that are just copies of another
+            $script->{$tag}{FEATURES} = [
+                grep $kept_features{$_}, @{$script->{$tag}{FEATURES}}
+            ];
+
+        }
+    }
+
+    # TODO: it'd be nice to delete languages that have no features
+
 }
 
 sub fix_gpos {
     my ($self) = @_;
     my $font = $self->{font};
 
-    my @lookups;
-    my $lookup_id = 0;
-    my %lookup_map;
-    for my $lookup (@{$font->{GPOS}{LOOKUP}}) {
-        my @subtables;
-        for my $sub (@{$lookup->{SUB}}) {
+    $self->fix_ttopen($font->{GPOS},
+        sub {
+            my ($lookup, $sub) = @_;
+
             # There's always a COVERAGE here first.
             # (If it's empty, the client will skip the entire subtable,
             # so we could delete it entirely, but that would involve updating
@@ -724,12 +861,7 @@ sub fix_gpos {
             # Format 3: COVERAGE absent, RULES[0][0]{PRE/MATCH/POST}[o] give coverages
             #
             # Lookup Type 9 (Extension Positioning):
-            # Blah
-
-            # TODO: I'm not at all confident that this is all correct --
-            # really ought to test it with real data...
-
-#            warn "$lookup->{TYPE} $sub->{FORMAT}";
+            # Not supported
 
             die if $lookup->{TYPE} >= 9;
 
@@ -742,7 +874,7 @@ sub fix_gpos {
                 ($sub->{COVERAGE}, @coverage_map) = $self->update_mapped_coverage_table($sub->{COVERAGE});
 
                 # If there's no coverage left, then drop this subtable
-                next if $self->empty_coverage($sub->{COVERAGE});
+                return 0 if $self->empty_coverage($sub->{COVERAGE});
             }
 
             if ($sub->{RULES} and not
@@ -767,7 +899,7 @@ sub fix_gpos {
                     ($sub->{MATCH}[0], @match_map) = $self->update_mapped_coverage_table($sub->{MATCH}[0]);
 
                     # If there's no coverage left, then drop this subtable
-                    next if $self->empty_coverage($sub->{MATCH}[0]);
+                    return 0 if $self->empty_coverage($sub->{MATCH}[0]);
 
                     # Update MARKS to correspond to the new MATCH coverage
                     $sub->{MARKS} = [ map $sub->{MARKS}[$_], @match_map ];
@@ -805,34 +937,19 @@ sub fix_gpos {
                 $sub->{$c} = $self->update_classdef_table($sub->{$c}) if $sub->{$c};
             }
 
-            push @subtables, $sub;
+            return 1;
         }
-
-        # Only keep lookups that have some subtables
-        if (@subtables) {
-            $lookup->{SUB} = \@subtables;
-            push @lookups, $lookup;
-            $lookup_map{$lookup_id} = $#lookups;
-        }
-        ++$lookup_id;
-    }
-
-    $font->{GPOS}{LOOKUP} = \@lookups;
-
-    # Update the FEATURES array's lookup references
-    for my $tag (@{$font->{GPOS}{FEATURES}{FEAT_TAGS}}) {
-        my $feat = $font->{GPOS}{FEATURES}{$tag};
-        $feat->{LOOKUPS} = [ map { exists $lookup_map{$_} ? ($lookup_map{$_}) : () } @{$feat->{LOOKUPS}} ];
-    }
+    );
 }
 
 sub fix_gsub {
     my ($self) = @_;
     my $font = $self->{font};
 
-    for my $lookup (@{$font->{GSUB}{LOOKUP}}) {
-        my @subtables;
-        for my $sub (@{$lookup->{SUB}}) {
+    $self->fix_ttopen($font->{GSUB},
+        sub {
+            my ($lookup, $sub) = @_;
+
             # There's always a COVERAGE here first.
             # (If it's empty, the client will skip the entire subtable,
             # so we could delete it entirely, but that would involve updating
@@ -840,7 +957,7 @@ sub fix_gsub {
             # too, so don't do that yet.)
             #
             # The rest depends on Type:
-            # 
+            #
             # Lookup Type 1 (Single Substitution Subtable):
             # Format 1: Just COVERAGE, and ADJUST gives glyph id delta
             # Format 2: Just COVERAGE, then RULES[n]{ACTION}[0] gives replacement glyph for each
@@ -883,7 +1000,7 @@ sub fix_gsub {
                 ($sub->{COVERAGE}, @coverage_map) = $self->update_mapped_coverage_table($sub->{COVERAGE});
 
                 # If there's no coverage left, then drop this subtable
-                next if $self->empty_coverage($sub->{COVERAGE});
+                return 0 if $self->empty_coverage($sub->{COVERAGE});
             }
 
             if ($sub->{ACTION_TYPE} eq 'o') {;
@@ -912,9 +1029,8 @@ sub fix_gsub {
                     }
                     $sub->{RULES} = [ map [{ACTION => [$_]}], @gids ];
                 }
-                # Don't bother with the rest of this loop, since we've
-                # done everything that's needed
-                next;
+                # Stop and keep this table, since done everything that's needed
+                return 1;
             }
             die if $sub->{ADJUST};
 
@@ -1006,7 +1122,7 @@ sub fix_gsub {
                 $sub->{RULES} = \@rules;
                 # If all the rules are empty, drop this whole subtable (which maybe is
                 # needed to avoid https://bugzilla.mozilla.org/show_bug.cgi?id=475242 ?)
-                next if not grep @$_, @{$sub->{RULES}};
+                return 0 if not grep @$_, @{$sub->{RULES}};
             }
 
             if ($sub->{ACTION_TYPE}) {
@@ -1032,17 +1148,15 @@ sub fix_gsub {
                         }
                     }
                 } elsif ($sub->{ACTION_TYPE} eq 'o') {
-                    die "Should have handeld ACTION_TYPE o earlier";
+                    die "Should have handled ACTION_TYPE o earlier";
                 } else {
                     die "Invalid ACTION_TYPE";
                 }
             }
 
-            push @subtables, $sub;
+            return 1;
         }
-        $lookup->{SUB} = \@subtables;
-    }
-
+    );
 }
 
 sub fix_hdmx {
@@ -1137,7 +1251,9 @@ sub new {
 }
 
 sub subset {
-    my ($self, $filename, $chars) = @_;
+    my ($self, $filename, $chars, $features) = @_;
+
+    $self->{features} = $features;
 
     my $uid = substr(sha1_hex("$filename $chars"), 0, 16);
 

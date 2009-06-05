@@ -28,6 +28,11 @@ die "Run '$0', or '$0 n' where n is the number of the test to rebuild\n"
     if defined $index and $index !~ /^\d+$/;
 
 my @tests = (
+    [ [qw(DejaVuSans.ttf)], ["fluffily لا f"], [20], [qw(aalt ccmp dlig fina hlig init liga locl medi rlig salt kern mark mkmk)] ],
+    [ [qw(DejaVuSans.ttf)], ["fluffily لا f"], [20], [qw(liga)] ],
+    [ [qw(DejaVuSans.ttf)], ["fluffily لا f"], [20], [qw(fina init rlig)] ],
+    [ [qw(DejaVuSans.ttf)], ["fluffily لا f"], [20], [] ],
+
     [ [@all], ["Hello world ABC abc 123"], [20] ],
     [ [qw(GenBasR.ttf DejaVuSans.ttf)], [
         "i",
@@ -118,8 +123,14 @@ for my $test (@tests) {
 
             (my $text_plain = $text) =~ s/<.*?>//g;
 
+            my $features;
+            if ($test->[3]) {
+                $features = {};
+                $features->{$_} = 1 for @{$test->[3]};
+            }
+
             my $s = new Font::Subsetter();
-            $s->subset("testfonts/$fn", $text_plain);
+            $s->subset("testfonts/$fn", $text_plain, $features);
             my $path = sprintf '%03d', $i;
             $s->write("testoutput/$path.ttf");
             my $old_glyphs = $s->num_glyphs_old;

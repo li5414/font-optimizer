@@ -125,7 +125,7 @@ for my $test (@tests) {
 
             my $features;
             if ($test->[3]) {
-                $features = {};
+                $features = { DEFAULT => 0 };
                 $features->{$_} = 1 for @{$test->[3]};
             }
 

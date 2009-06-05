@@ -223,7 +223,9 @@ sub want_feature {
 sub find_wanted_lookup_ids {
     my ($self, $table) = @_;
 
-    # return 0..$#{$table->{LOOKUP}};
+    # If we wanted to include all lookups:
+    #   return 0..$#{$table->{LOOKUP}};
+    # but actually we only want ones used by wanted features
 
     my %lookups;
     for my $feat_tag (@{$table->{FEATURES}{FEAT_TAGS}}) {

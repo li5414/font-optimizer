@@ -1245,6 +1245,23 @@ sub change_name {
     }
 }
 
+sub license_desc_subst {
+    my ($self, $new) = @_;
+    my $font = $self->{font};
+
+    my $str = $font->{name}{strings}[13];
+    for my $plat (0..$#$str) {
+        next unless $str->[$plat];
+        for my $enc (0..$#{$str->[$plat]}) {
+            next unless $str->[$plat][$enc];
+            for my $lang (keys %{$str->[$plat][$enc]}) {
+                next unless exists $str->[$plat][$enc]{$lang};
+                $str->[$plat][$enc]{$lang} =~ s/\$\{LICENSESUBST\}/$new/g;
+            }
+        }
+    }
+}
+
 sub new {
     my $class = shift;
     my $self = {};
@@ -1253,9 +1270,9 @@ sub new {
 }
 
 sub subset {
-    my ($self, $filename, $chars, $features) = @_;
+    my ($self, $filename, $chars, $options) = @_;
 
-    $self->{features} = $features;
+    $self->{features} = $options->{features};
 
     my $uid = substr(sha1_hex("$filename $chars"), 0, 16);
 
@@ -1302,6 +1319,9 @@ sub subset {
     $self->fix_os_2; # Must come after cmap, hmtx, hhea, GPOS, GSUB
 
     $self->change_name($uid);
+
+    $self->license_desc_subst($options->{license_desc_subst})
+        if defined $options->{license_desc_subst};
 
     $self->{num_glyphs_new} = $font->{maxp}{numGlyphs};
 }

@@ -22,6 +22,8 @@ Options:
                         (all others will be excluded by default)
   --exclude=FEATURES    comma-separate list of feature tags to exclude
                         (all others will be included by default)
+  --licensesubst=STRING substitutes STRING in place of the string \${LICENSESUBST}
+                        in the font's License Description
 EOF
     exit 1;
 }
@@ -31,12 +33,14 @@ sub main {
     my $chars = "test";
     my $include;
     my $exclude;
+    my $license_desc_subst;
 
     my $result = GetOptions(
         'chars=s' => \$chars,
         'verbose' => \$verbose,
         'include=s' => \$include,
         'exclude=s' => \$exclude,
+        'licensesubst=s' => \$license_desc_subst,
     ) or help();
 
     @ARGV == 2 or help();
@@ -59,7 +63,7 @@ sub main {
     }
 
     my $subsetter = new Font::Subsetter();
-    $subsetter->subset($input_file, $chars, $features);
+    $subsetter->subset($input_file, $chars, { features => $features, license_desc_subst => $license_desc_subst });
     $subsetter->write($output_file);
 
     if ($verbose) {

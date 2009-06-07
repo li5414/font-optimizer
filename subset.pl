@@ -1,4 +1,5 @@
-#!/usr/bin/perl
+#!/usr/bin/perl -CA
+  # use the -CA flag so @ARGV is interpreted as UTF-8
 
 use strict;
 use warnings;
@@ -17,6 +18,7 @@ Usage:
 
 Options:
   --chars=STRING        characters to include in the subset (defaults to "test")
+  --charsfile=FILE      utf8-encoded file containing characters to include
   --verbose, -v         print various details about the font and the subsetting
   --include=FEATURES    comma-separate list of feature tags to include
                         (all others will be excluded by default)
@@ -30,18 +32,34 @@ EOF
 
 sub main {
     my $verbose = 0;
-    my $chars = "test";
+    my $chars;
+    my $charsfile;
     my $include;
     my $exclude;
     my $license_desc_subst;
 
     my $result = GetOptions(
         'chars=s' => \$chars,
+        'charsfile=s' => \$charsfile,
         'verbose' => \$verbose,
         'include=s' => \$include,
         'exclude=s' => \$exclude,
         'licensesubst=s' => \$license_desc_subst,
     ) or help();
+
+    if (defined $chars and defined $charsfile) {
+        print "ERROR: Only one of '--chars' and --charsfile' can be specified\n\n";
+        help();
+    } elsif (defined $chars) {
+        # just use $chars
+    } elsif (defined $charsfile) {
+        open my $f, '<', $charsfile or die "Failed to open $charsfile: $!";
+        binmode $f, ':utf8';
+        local $/;
+        $chars = <$f>;
+    } else {
+        $chars = 'test';
+    }
 
     @ARGV == 2 or help();
 

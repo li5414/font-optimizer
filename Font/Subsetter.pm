@@ -29,6 +29,7 @@ use warnings;
 use Carp;
 use Unicode::Normalize();
 use Digest::SHA qw(sha1_hex);
+use Encode;
 
 use Font::TTF;
 use Font::TTF::Font;
@@ -158,21 +159,28 @@ sub find_codepoint_glyph_mappings {
     my %glyphs;
     for my $table (@{$font->{cmap}{Tables}}) {
         for my $cp (keys %{$table->{val}}) {
-            if (not (
-                $table->{Platform} == 0 # Unicode
+
+            my $ucp; # Unicode code point
+
+            if ($table->{Platform} == 0 # Unicode
                 or ($table->{Platform} == 3 and # Windows
                     ($table->{Encoding} == 1 or # Unicode BMP
                      $table->{Encoding} == 10)) # Unicode full
-                or ($table->{Platform} == 1 # Mac
-                    and $table->{Encoding} == 0) # "Roman" (assume it's Latin-1)
-            )) {
+            ) {
+                $ucp = $cp;
+            } elsif ($table->{Platform} == 1 # Mac
+                    and $table->{Encoding} == 0) # Roman
+            {
+                $ucp = ord(decode('MacRoman', pack C => $cp));
+            } else {
                 # This table might not map directly onto Unicode codepoints,
                 # so warn about it
-                warn "Unrecognised cmap table type (platform $table->{Platform}, encoding $table->{Encoding})\n";
+                warn "Unrecognised cmap table type (platform $table->{Platform}, encoding $table->{Encoding}) - ignoring its character/glyph mappings\n";
+                next;
             }
 
-            my $g = $table->{val}{$cp};
-            $glyphs{$g}{$cp} = 1;
+            my $g = $table->{val}{$cp}; # glyph id
+            $glyphs{$g}{$ucp} = 1;
         }
     }
     $self->{glyphs} = \%glyphs;

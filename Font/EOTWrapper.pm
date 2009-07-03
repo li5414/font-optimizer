@@ -82,6 +82,8 @@ sub convert {
     $out->print(pack V => 4 + length($header) + length($font_data));
     $out->print($header);
     $out->print($font_data);
+
+    $font->release;
 }
 
 # sub rootStringChecksum {

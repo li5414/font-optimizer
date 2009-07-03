@@ -86,6 +86,9 @@ sub main {
 
     if ($verbose) {
         print "\n";
+        print "Features:\n  ";
+        print join ' ', $subsetter->feature_status();
+        print "\n\n";
         print "Included glyphs:\n  ";
         print join ' ', $subsetter->glyph_names();
         print "\n\n";

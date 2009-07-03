@@ -1342,6 +1342,22 @@ sub glyph_names {
     return @{$font->{post}{VAL}};
 }
 
+sub feature_status {
+    my ($self) = @_;
+    my $font = $self->{font};
+    my %feats;
+    my @feats;
+    for my $table (grep defined, $font->{GPOS}, $font->{GSUB}) {
+        for my $feature (@{$table->{FEATURES}{FEAT_TAGS}}) {
+            $feature =~ /^(\w{4})( _\d+)?$/ or die "Unrecognised feature tag syntax '$feature'";
+            my $tag = $1;
+            next if $feats{$tag}++;
+            push @feats, $tag;
+        }
+    }
+    return @feats;
+}
+
 sub write {
     my ($self, $fh) = @_;
     my $font = $self->{font};

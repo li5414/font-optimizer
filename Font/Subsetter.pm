@@ -64,7 +64,7 @@ my %font_tables = (
     # PostScript outlines: (TODO: support these?)
     'CFF ' => ['FORBIDDEN'],
     'VORG' => ['FORBIDDEN'],
-    # Bitmap glyphs:
+    # Bitmap glyphs: (TODO: support these? or drop them?)
     'EBDT' => ['FORBIDDEN'],
     'EBLC' => ['FORBIDDEN'],
     'EBSC' => ['FORBIDDEN'],
@@ -279,12 +279,15 @@ sub find_wanted_glyphs {
     my %wanted_chars = $self->expand_wanted_chars($chars);
     $self->{wanted_glyphs} = {};
 
-    $self->{wanted_glyphs}{0} = 1; # always have .notdef
-    $self->{wanted_glyphs}{1} = 1; # always have .null
-    $self->{wanted_glyphs}{2} = 1; # always have CR
-    $self->{wanted_glyphs}{3} = 1; # always have space
-    # TODO: is that necessarily correct, per http://www.microsoft.com/typography/otspec/recom.htm ?
-    # (Also follow other recs in there)
+    # http://www.microsoft.com/typography/otspec/recom.htm suggests that fonts
+    # should include .notdef, .null, CR, space; so include them all here, if they
+    # are already defined
+    for my $gid (0..$#{$font->{loca}{glyphs}}) {
+        my $name = $font->{post}{VAL}[$gid];
+        if ($name and ($name eq '.notdef' or $name eq '.null' or $name eq 'CR' or $name eq 'space')) {
+            $self->{wanted_glyphs}{$gid} = 1;
+        }
+    }
 
     # We want any glyphs used directly by any characters we want
     for my $gid (keys %{$self->{glyphs}}) {
@@ -419,6 +422,15 @@ sub find_wanted_glyphs {
             }
         }
 
+        @newly_wanted_glyphs = @new_glyphs;
+    }
+
+    # Now we want to add glyphs that are used for composite rendering,
+    # which don't participate in any GSUB behaviour
+    @newly_wanted_glyphs = keys %{$self->{wanted_glyphs}};
+    while (@newly_wanted_glyphs) {
+        my @new_glyphs;
+
         if ($font->{loca}) {
             # If we want a composite glyph, we want all of its
             # component glyphs too
@@ -440,7 +452,6 @@ sub find_wanted_glyphs {
 
         @newly_wanted_glyphs = @new_glyphs;
     }
-
 }
 
 sub update_classdef_table {

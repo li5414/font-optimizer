@@ -195,25 +195,27 @@ sub expand_wanted_chars {
     # So if @chars contains i and {combining grave}, then we have to
     # add {i grave} because that might get used.
     #
-    # So... Decompose all the input characters. Then, add any other character
-    # which can be decomposed into a subset of those characters.
+    # So... Include all the unchanged characters. Also include the NFC
+    # of each character. Then use NormalizationData to add any characters
+    # that can result from NFCing a string of the wanted characters.
 
-    if (0) {
+    if (0) { # change to 1 to disable all this fancy stuff
         my %cs = map { ord $_ => 1 } split '', $chars;
         return %cs;
     }
 
-    my @cs = split '', ($chars . Unicode::Normalize::NFD($chars));
-    my %cs = map { ord $_ => 1 } @cs;
+    my %cs = map { ord $_ => 1, ord Unicode::Normalize::NFC($_) => 1 } split '', $chars;
     require Font::Subsetter::NormalizationData;
+    my %new_cs;
     for my $c (@Font::Subsetter::NormalizationData::data) {
         # Skip this if we've already got the composed character
         next if $cs{$c->[0]};
         # Skip this if we don't have all the decomposed characters
         next if grep !$cs{$_}, @{$c}[1..$#$c];
         # Otherwise we want the composed character
-        $cs{$c->[0]} = 1;
+        $new_cs{$c->[0]} = 1;
     }
+    $cs{$_} = 1 for keys %new_cs;
     return %cs;
 }
 

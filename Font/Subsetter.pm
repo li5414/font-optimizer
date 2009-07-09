@@ -64,10 +64,10 @@ my %font_tables = (
     # PostScript outlines: (TODO: support these?)
     'CFF ' => ['FORBIDDEN'],
     'VORG' => ['FORBIDDEN'],
-    # Bitmap glyphs: (TODO: support these? or drop them?)
-    'EBDT' => ['FORBIDDEN'],
-    'EBLC' => ['FORBIDDEN'],
-    'EBSC' => ['FORBIDDEN'],
+    # Bitmap glyphs: (TODO: support these?)
+    'EBDT' => ['DROP', 'embedded bitmap glyphs will be lost'],
+    'EBLC' => ['DROP', 'embedded bitmap glyphs will be lost'],
+    'EBSC' => ['DROP', 'embedded bitmap glyphs will be lost'],
     # Advanced typographic tables:
     'BASE' => ['UNFINISHED'],
     'GDEF' => ['OPTIONAL'],
@@ -119,7 +119,8 @@ sub check_tables {
             } elsif ($status eq 'UNFINISHED') {
                 warn "Uses unhandled table '$_'\n";
             } elsif ($status eq 'DROP') {
-                warn "Dropping table '$_'\n";
+                my $note = ($t->[1] ? ' - '.$t->[1] : '');
+                warn "Dropping table '$_'$note\n";
                 delete $font->{$_};
             } elsif ($status eq 'OPTIONAL') {
             } elsif ($status eq 'IGNORED') {
@@ -284,11 +285,17 @@ sub find_wanted_glyphs {
     # http://www.microsoft.com/typography/otspec/recom.htm suggests that fonts
     # should include .notdef, .null, CR, space; so include them all here, if they
     # are already defined
-    for my $gid (0..$#{$font->{loca}{glyphs}}) {
-        my $name = $font->{post}{VAL}[$gid];
-        if ($name and ($name eq '.notdef' or $name eq '.null' or $name eq 'CR' or $name eq 'space')) {
-            $self->{wanted_glyphs}{$gid} = 1;
+    if ($font->{post}{VAL}) {
+        for my $gid (0..$#{$font->{loca}{glyphs}}) {
+            my $name = $font->{post}{VAL}[$gid];
+            if ($name and ($name eq '.notdef' or $name eq '.null' or $name eq 'CR' or $name eq 'space')) {
+                $self->{wanted_glyphs}{$gid} = 1;
+            }
         }
+    } else {
+        # If post.FormatType == 3 then we don't have any glyph names
+        # so just assume it's the first four
+        $self->{wanted_glyphs}{$_} = 1 for 0..3;
     }
 
     # We want any glyphs used directly by any characters we want
@@ -673,11 +680,13 @@ sub fix_post {
     my $font = $self->{font};
 
     # Update PostScript name mappings for new glyph ids
-    my @new_vals;
-    for my $gid (0..$font->{maxp}{numGlyphs}-1) {
-        push @new_vals, $font->{post}{VAL}[$self->{glyph_id_new_to_old}{$gid}];
+    if ($font->{post}{VAL}) {
+        my @new_vals;
+        for my $gid (0..$font->{maxp}{numGlyphs}-1) {
+            push @new_vals, $font->{post}{VAL}[$self->{glyph_id_new_to_old}{$gid}];
+        }
+        $font->{post}{VAL} = \@new_vals;
     }
-    $font->{post}{VAL} = \@new_vals;
 }
 
 
@@ -1203,7 +1212,7 @@ sub fix_kern {
     # http://developer.apple.com/textfonts/TTRefMan/RM06/Chap6kern.html
     # https://bugzilla.mozilla.org/show_bug.cgi?id=487549
     if ($font->{kern}{Version} != 0) {
-        warn "Unhandled kern table version $font->{kern}{Version}\n";
+        warn "Unhandled kern table version $font->{kern}{Version} - deleting all kerning data\n";
         delete $font->{kern};
         return;
     }
@@ -1360,7 +1369,12 @@ sub num_glyphs_new {
 sub glyph_names {
     my ($self) = @_;
     my $font = $self->{font};
-    return @{$font->{post}{VAL}};
+    if (@{$font->{post}{VAL}}) {
+        return @{$font->{post}{VAL}};
+    }
+    my $n = $#{$font->{loca}{glyphs}};
+    return join ' ', map { chr($_) =~ /[a-zA-Z0-9- \|]/ ? "'".chr($_)."'" : sprintf 'U+%04x', $_ } map { keys %{$self->{glyphs}{$_}} }
+        map $self->{glyph_id_new_to_old}{$_}, 0..$n;
 }
 
 sub feature_status {

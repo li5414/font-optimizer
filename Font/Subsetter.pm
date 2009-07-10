@@ -515,7 +515,7 @@ sub update_mapped_classdef_table {
     my $max = 0;
     for (values %{$ret->{val}}) { $max = $_ if $_ > $max }
     $ret->{max} = $max;
-    return ($ret, \@map_old_to_new);
+    return ($ret, \@map_old_to_new, \@map_new_to_old);
 }
 
 # Removes unwanted glyphs from a coverage table, for
@@ -936,6 +936,7 @@ sub fix_gpos {
                     # Update MARKS to correspond to the new MATCH coverage
                     $sub->{MARKS} = [ map $sub->{MARKS}[$_], @match_map ];
                 }
+
                 # RULES->MATCH is an array of glyphs, so translate them all
                 for (@{$sub->{RULES}}) {
                     for (@$_) {
@@ -954,19 +955,44 @@ sub fix_gpos {
                     }
                 } elsif ($sub->{MATCH_TYPE} eq 'c') {
                     die "Didn't expect any rule matches" if grep $_->{MATCH}, map @$_, @{$sub->{RULES}};
-
-                    # Update MATCH classdef
                     die unless @{$sub->{MATCH}} == 1;
-                    $sub->{MATCH}[0] = $self->update_classdef_table($sub->{MATCH}[0]);
+
+                    my $class_map;
+                    ($sub->{CLASS}, undef, $class_map) = $self->update_mapped_classdef_table($sub->{CLASS});
+                    # Special case: If this results in an empty CLASS, it'll
+                    # break in FF3.5 on Linux, so assign all the COVERAGE glyphs onto
+                    # class 1 and update $class_map appropriately
+                    if ($sub->{CLASS}{max} == 0) {
+                        $sub->{CLASS} = new Font::TTF::Coverage(0, map +($_ => 1), keys %{$sub->{COVERAGE}{val}});
+                        $class_map = [0, 0]; # just duplicate class 0 into class 1 (this is a bit inefficient)
+                    }
+
+                    $sub->{RULES} = [ @{$sub->{RULES}}[@$class_map] ];
+
+                    # Update the MATCH classdef table
+                    my $match_map;
+                    ($sub->{MATCH}[0], undef, $match_map) = $self->update_mapped_classdef_table($sub->{MATCH}[0]);
+
+                    # If the MATCH table is now empty, drop this lookup
+                    # (else FF3.5 on Linux drops the GPOS table entirely)
+                    return 0 if @$match_map <= 1;
+
+                    # RULES[n] is a list of substitutions per MATCH class, so
+                    # update all those lists for the new classdef
+                    $sub->{RULES} = [ map { [ @{$_}[@$match_map] ] } @{$sub->{RULES}} ];
 
                 } else {
                     die "Invalid MATCH_TYPE";
                 }
             }
 
-            # Update some class tables
-            for my $c (qw(CLASS PRE_CLASS POST_CLASS)) {
-                $sub->{$c} = $self->update_classdef_table($sub->{$c}) if $sub->{$c};
+            if (($lookup->{TYPE} == 7 or
+                 $lookup->{TYPE} == 8)
+                    and $sub->{FORMAT} == 2) {
+                # Update some class tables
+                for my $c (qw(CLASS PRE_CLASS POST_CLASS)) {
+                    $sub->{$c} = $self->update_classdef_table($sub->{$c}) if $sub->{$c};
+                }
             }
 
             return 1;
@@ -1014,14 +1040,6 @@ sub fix_gsub {
             # Blah
 
             die if $lookup->{TYPE} >= 7;
-
-            # If it's impossible for this subtable to match, then
-            # we want to delete the whole thing.
-            # But that messes up index numbers so it's hard and
-            # I'm not going to bother.
-            #if (not $self->gsub_can_match($lookup, $sub)) {
-            #    # ...
-            #}
 
             # Update the COVERAGE table, and remember some mapping
             # information to update things that refer to the table
@@ -1299,6 +1317,13 @@ sub new {
     return $self;
 }
 
+sub preload {
+    my ($self, $filename) = @_;
+    my $font = Font::TTF::Font->open($filename) or die "Failed to open $filename: $!";
+    $self->{font} = $font;
+    $self->read_tables;
+}
+
 sub subset {
     my ($self, $filename, $chars, $options) = @_;
 
@@ -1306,17 +1331,19 @@ sub subset {
 
     my $uid = substr(sha1_hex("$filename $chars"), 0, 16);
 
-    my $font = Font::TTF::Font->open($filename) or die "Failed to open $filename: $!";
-    $self->{font} = $font;
+    if (not $self->{font}) {
+        $self->preload($filename);
+    }
+
+    my $font = $self->{font};
 
     $self->check_tables;
 
     $self->{num_glyphs_old} = $font->{maxp}{numGlyphs};
 
-    $self->read_tables;
 
     my $fsType = $font->{'OS/2'}{fsType};
-    warn "fsType is $fsType\n" if $fsType != 0;
+    warn "fsType is $fsType - subsetting and embedding might not be permitted by the license\n" if $fsType != 0;
 
     $self->find_codepoint_glyph_mappings;
     $self->find_wanted_glyphs($chars);

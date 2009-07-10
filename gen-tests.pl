@@ -10,6 +10,7 @@ use lib 'ext/Font-TTF/lib';
 use Font::Subsetter;
 use Font::EOTWrapper;
 use Encode;
+use Clone;
 
 use utf8;
 
@@ -21,6 +22,8 @@ my @all = qw(
     DoulosSILR.ttf
     DejaVuSans.ttf
     DejaVuSerif.ttf
+    calibri.ttf
+    FedraSansPro-Demi.ttf
 );
 
 my $index = $ARGV[0];
@@ -28,13 +31,19 @@ die "Run '$0', or '$0 n' where n is the number of the test to rebuild\n"
     if defined $index and $index !~ /^\d+$/;
 
 my @tests = (
-    [ [qw(DejaVuSans.ttf)], ["fluffily لا f"], [20], [qw(aalt ccmp dlig fina hlig init liga locl medi rlig salt kern mark mkmk)] ],
-    [ [qw(DejaVuSans.ttf)], ["fluffily لا f"], [20], [qw(liga)] ],
-    [ [qw(DejaVuSans.ttf)], ["fluffily لا f"], [20], [qw(fina init rlig)] ],
-    [ [qw(DejaVuSans.ttf)], ["fluffily لا f"], [20], [] ],
+    # These aren't proper tests (they drop features that affect the rendering)
+    # TODO: fix them so they are proper, and test that they're really dropping the
+    # unneeded glyphs etc
+#     [ [qw(DejaVuSans.ttf FedraSansPro-Demi.ttf)], ["fluffily لا f"], [20], [qw(aalt ccmp dlig fina hlig init liga locl medi rlig salt kern mark mkmk)] ],
+#     [ [qw(DejaVuSans.ttf FedraSansPro-Demi.ttf)], ["fluffily لا f"], [20], [qw(liga)] ],
+#     [ [qw(DejaVuSans.ttf FedraSansPro-Demi.ttf)], ["fluffily لا f"], [20], [qw(fina init rlig)] ],
+#     [ [qw(DejaVuSans.ttf FedraSansPro-Demi.ttf)], ["fluffily لا f"], [20], [] ],
 
+    # Basic rendering
     [ [@all], ["Hello world ABC abc 123"], [20] ],
-    [ [qw(GenBasR.ttf DejaVuSans.ttf)], [
+
+    # Substitution and NFC issues
+    [ [qw(GenBasR.ttf DejaVuSans.ttf FedraSansPro-Demi.ttf)], [
         "i",
         "\xec",
         "i\x{0300}",
@@ -42,11 +51,26 @@ my @tests = (
         "ixixi",
         "i<span class='h'>\x{0300}</span>",
     ], [20, 8] ],
-    [ [qw(LinLibertine_Re-4.1.8.ttf DejaVuSans.ttf)], [
+    [ [qw(DejaVuSans.ttf FedraSansPro-Demi.ttf)], [
+        "s\x{0323}\x{0307}", # s, combining dot below, combining dot above
+        "s\x{0307}\x{0323}", # s, combining dot above, combining dot below
+        "\x{1e61}\x{0323}", # s with dot above, combining dot below
+        "\x{1e63}\x{0307}", # s with dot below, combining dot above
+        "\x{212b}", # angstrom
+    ], [20, 8] ],
+
+    # Ligature rendering
+    [ [qw(LinLibertine_Re-4.1.8.ttf DejaVuSans.ttf FedraSansPro-Demi.ttf)], [
         "fluffily",
         "f<span>l</span>uf<span>f</span>ily",
         "f<span class='h'>l</span>uf<span class='h'>f</span>ily",
     ], [20, 8] ],
+
+    # GPOS issues
+    [ [qw(DejaVuSans.ttf FedraSansPro-Demi.ttf calibri.ttf)],
+        ["|VAVAV|", "ToToT", "x//x"], [20], ['kern'] ],
+
+    # Lots of stuff
     [ [@all], ["VABC(123) fTo fluffiest f<span class='h'>f</span>i!\@#,. \x{00e2}\x{00eb}I\x{0303}o\x{0300}u\x{030a}\x{0305}\x{0303} i\x{0331}\x{0301} \x{0d23}\x{0d4d}\x{200d} παρακαλώ хэлло  你好 表示问候 やあ التل<span class='h'>ف</span>ون הלו"], [20, 8] ],
 
 );
@@ -73,6 +97,17 @@ small {
     padding-right: 4px;
 }
 EOF
+
+my %font_cache;
+sub new_font {
+    my ($fn) = @_;
+    if (not $font_cache{$fn}) {
+        my $s = new Font::Subsetter();
+        $s->preload($fn);
+        $font_cache{$fn} = $s;
+    }
+    return Clone::clone($font_cache{$fn});
+}
 
 my %std_fonts;
 # if (0) { my $j = 0;
@@ -129,8 +164,8 @@ for my $test (@tests) {
                 $features->{$_} = 1 for @{$test->[3]};
             }
 
-            my $s = new Font::Subsetter();
-            $s->subset("testfonts/$fn", $text_plain, $features);
+            my $s = new_font("testfonts/$fn");
+            $s->subset("testfonts/$fn", $text_plain, { features => $features });
             my $path = sprintf '%03d', $i;
             $s->write("testoutput/$path.ttf");
             my $old_glyphs = $s->num_glyphs_old;

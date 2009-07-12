@@ -1310,6 +1310,31 @@ sub license_desc_subst {
     }
 }
 
+# IE silently rejects non-CFF fonts if the Font Family Name is not a prefix of
+# the Full Font Name. This can occur when automatically converting CFF fonts
+# to non-CFF fonts, so it's useful to check and fix it here.
+sub fix_full_font_name {
+    my ($self, $new) = @_;
+    my $font = $self->{font};
+
+    my $str1 = $font->{name}{strings}[1];
+    for my $plat (0..$#$str1) {
+        next unless $str1->[$plat];
+        for my $enc (0..$#{$str1->[$plat]}) {
+            next unless $str1->[$plat][$enc];
+            for my $lang (keys %{$str1->[$plat][$enc]}) {
+                next unless exists $str1->[$plat][$enc]{$lang};
+                my $name = $str1->[$plat][$enc]{$lang};
+                my $fullname = $font->{name}{strings}[4][$plat][$enc]{$lang};
+                if (substr($fullname, 0, length $name) ne $name) {
+                    warn "Full Name ('$fullname') does not start with Family Name ('$name') and will break in IE - fixing automatically\n";
+                    $font->{name}{strings}[4][$plat][$enc]{$lang} = $name;
+                }
+            }
+        }
+    }
+}
+
 sub new {
     my $class = shift;
     my $self = {};
@@ -1374,6 +1399,8 @@ sub subset {
 
     $self->fix_maxp; # Must come after loca, prep, fpgm
     $self->fix_os_2; # Must come after cmap, hmtx, hhea, GPOS, GSUB
+
+    $self->fix_full_font_name;
 
     $self->change_name($uid);
 

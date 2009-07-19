@@ -25,6 +25,24 @@ EOF
     exit 1;
 }
 
+sub set_name {
+    my ($font, $id, $val, $verbose) = @_;
+    my $str = $font->{name}{strings}[$id];
+    for my $plat (0..$#$str) {
+        next unless $str->[$plat];
+        for my $enc (0..$#{$str->[$plat]}) {
+            next unless $str->[$plat][$enc];
+            for my $lang (keys %{$str->[$plat][$enc]}) {
+                next unless exists $str->[$plat][$enc]{$lang};
+                if ($verbose) {
+                    print "Setting string $_ (plat $plat, enc $enc) to \"$val\"\n";
+                }
+                $str->[$plat][$enc]{$lang} = $val;
+            }
+        }
+    }
+}
+
 sub main {
     my $verbose = 0;
 
@@ -40,7 +58,7 @@ sub main {
 
     $font->{name}->read;
 
-    for (6, 16, 17, 18) {
+    for (16, 17, 18) {
         if ($verbose and $font->{name}{strings}[$_]) {
             print "Deleting string $_\n";
         }
@@ -48,20 +66,11 @@ sub main {
     }
 
     for (1, 3, 4, 5) {
-        my $str = $font->{name}{strings}[$_];
-        for my $plat (0..$#$str) {
-            next unless $str->[$plat];
-            for my $enc (0..$#{$str->[$plat]}) {
-                next unless $str->[$plat][$enc];
-                for my $lang (keys %{$str->[$plat][$enc]}) {
-                    next unless exists $str->[$plat][$enc]{$lang};
-                    if ($verbose) {
-                        print "Emptying string $_ (plat $plat, enc $enc)\n";
-                    }
-                    $str->[$plat][$enc]{$lang} = '';
-                }
-            }
-        }
+        set_name($font, $_, '', $verbose);
+    }
+
+    for (6) {
+        set_name($font, $_, '-', $verbose);
     }
 
     $font->out($output_file);

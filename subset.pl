@@ -20,10 +20,16 @@ Options:
   --chars=STRING        characters to include in the subset (defaults to "test")
   --charsfile=FILE      utf8-encoded file containing characters to include
   --verbose, -v         print various details about the font and the subsetting
-  --include=FEATURES    comma-separate list of feature tags to include
+  --include=FEATURES    comma-separated list of feature tags to include
                         (all others will be excluded by default)
-  --exclude=FEATURES    comma-separate list of feature tags to exclude
+  --exclude=FEATURES    comma-separated list of feature tags to exclude
                         (all others will be included by default)
+  --apply=FEATURES      comma-separated list of feature tags to apply to the
+                        font directly (folding into the cmap table),
+                        e.g. "smcp" to replace all letters with small-caps
+                        versions. (You should use --include/--exclude to remove
+                        the features, so they don't get applied a second time
+                        when rendering.)
   --licensesubst=STRING substitutes STRING in place of the string \${LICENSESUBST}
                         in the font's License Description
 EOF
@@ -36,6 +42,7 @@ sub main {
     my $charsfile;
     my $include;
     my $exclude;
+    my $apply;
     my $license_desc_subst;
 
     my $result = GetOptions(
@@ -44,6 +51,7 @@ sub main {
         'verbose' => \$verbose,
         'include=s' => \$include,
         'exclude=s' => \$exclude,
+        'apply=s' => \$apply,
         'licensesubst=s' => \$license_desc_subst,
     ) or help();
 
@@ -80,8 +88,17 @@ sub main {
         $features->{$_} = 0 for split /,/, $exclude;
     }
 
+    my $fold_features;
+    if ($apply) {
+        $fold_features = [ split /,/, $apply ];
+    }
+
     my $subsetter = new Font::Subsetter();
-    $subsetter->subset($input_file, $chars, { features => $features, license_desc_subst => $license_desc_subst });
+    $subsetter->subset($input_file, $chars, {
+        features => $features,
+        fold_features => $fold_features,
+        license_desc_subst => $license_desc_subst,
+    });
     $subsetter->write($output_file);
 
     if ($verbose) {

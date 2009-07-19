@@ -221,13 +221,13 @@ sub expand_wanted_chars {
 }
 
 sub want_feature {
-    my ($self, $feature) = @_;
+    my ($self, $wanted, $feature) = @_;
     # If no feature list was specified, accept all features
-    return 1 if not $self->{features};
+    return 1 if not $wanted;
     # Otherwise find the four-character tag
     $feature =~ /^(\w{4})( _\d+)?$/ or die "Unrecognised feature tag syntax '$feature'";
-    return $self->{features}{$1} if exists $self->{features}{$1};
-    return $self->{features}{DEFAULT} if exists $self->{features}{DEFAULT};
+    return $wanted->{$1} if exists $wanted->{$1};
+    return $wanted->{DEFAULT} if exists $wanted->{DEFAULT};
     return 1;
 }
 
@@ -240,7 +240,7 @@ sub find_wanted_lookup_ids {
 
     my %lookups;
     for my $feat_tag (@{$table->{FEATURES}{FEAT_TAGS}}) {
-        next if not $self->want_feature($feat_tag);
+        next if not $self->want_feature($self->{features}, $feat_tag);
         for (@{$table->{FEATURES}{$feat_tag}{LOOKUPS}}) {
             $lookups{$_} = 1;
         }
@@ -818,7 +818,7 @@ sub fix_ttopen {
     my @features; # array of [tag, feature]
     my %kept_features;
     for my $feat_tag (@{$table->{FEATURES}{FEAT_TAGS}}) {
-        next unless $self->want_feature($feat_tag); # drop unwanted features
+        next unless $self->want_feature($self->{features}, $feat_tag); # drop unwanted features
         my $feat = $table->{FEATURES}{$feat_tag};
         $feat->{LOOKUPS} = [ map { exists $lookup_map{$_} ? ($lookup_map{$_}) : () } @{$feat->{LOOKUPS}} ];
         next unless @{$feat->{LOOKUPS}}; # drop empty features to save some space
@@ -1209,6 +1209,89 @@ sub fix_gsub {
     );
 }
 
+# Fold certain GSUB features into the cmap table
+sub fold_gsub {
+    my ($self, $features) = @_;
+
+    my $font = $self->{font};
+    my $table = $font->{GSUB};
+
+    # Find the lookup IDs corresponding to the desired features
+
+    my %wanted = (DEFAULT => 0);
+    $wanted{$_} = 1 for @$features;
+
+    my %lookups;
+    for my $feat_tag (@{$table->{FEATURES}{FEAT_TAGS}}) {
+        next if not $self->want_feature(\%wanted, $feat_tag);
+        for (@{$table->{FEATURES}{$feat_tag}{LOOKUPS}}) {
+            $lookups{$_} = $feat_tag;
+        }
+    }
+
+    # Find the glyph mapping from those lookups
+
+    my %glyph_map; # (old glyph id => new glyph id)
+
+    for my $lookup_id (0..$#{$table->{LOOKUP}}) {
+        next unless exists $lookups{$lookup_id};
+        my $lookup = $table->{LOOKUP}[$lookup_id];
+        if ($lookup->{TYPE} != 1) {
+            warn "GSUB lookup $lookup_id (from feature '$lookups{$lookup_id}') is not a 'single' type lookup (type=$lookup->{TYPE}), and cannot be applied.\n";
+            next;
+        }
+
+        # For each glyph, only the first substitution per lookup is applied,
+        # so we build a map of the firsts for this lookup (then fold it into
+        # the global map later)
+        my %lookup_glyph_map;
+
+        for my $sub (@{$lookup->{SUB}}) {
+            my @covs = $self->coverage_array($sub->{COVERAGE});
+            if ($sub->{ACTION_TYPE} eq 'o') {
+                my $adj = $sub->{ADJUST};
+                if ($adj >= 32768) { $adj -= 65536 } # fix Font::TTF::Bug (http://rt.cpan.org/Ticket/Display.html?id=42727)
+                for my $i (0..$#covs) {
+                    my $old = $covs[$i];
+                    my $new = $old + $adj;
+                    $lookup_glyph_map{$old} = $new if not exists $lookup_glyph_map{$old};
+                }
+            } elsif ($sub->{ACTION_TYPE} eq 'g') {
+                next if @covs == 0 and not $sub->{RULES};
+                die unless @{$sub->{RULES}} == @covs;
+                for my $i (0..$#covs) {
+                    my $old = $covs[$i];
+                    die unless @{$sub->{RULES}[$i]} == 1;
+                    die unless @{$sub->{RULES}[$i][0]{ACTION}} == 1;
+                    my $new = $sub->{RULES}[$i][0]{ACTION}[0];
+                    $lookup_glyph_map{$old} = $new;
+                }
+            } else {
+                die "Invalid ACTION_TYPE $sub->{ACTION_TYPE}";
+            }
+        }
+
+        # Fold the lookup's glyph map into the global glyph map
+        for my $gid (keys %lookup_glyph_map) {
+            # Add any new substitutions
+            $glyph_map{$gid} = $lookup_glyph_map{$gid} if not exists $glyph_map{$gid};
+        }
+        for my $gid (keys %glyph_map) {
+            # Handle chained substitutions
+            $glyph_map{$gid} = $lookup_glyph_map{$glyph_map{$gid}} if exists $lookup_glyph_map{$glyph_map{$gid}};
+        }
+    }
+
+    # Apply the glyph mapping to cmap
+
+    for my $table (@{$font->{cmap}{Tables}}) {
+        for my $cp (keys %{$table->{val}}) {
+            my $gid = $table->{val}{$cp};
+            $table->{val}{$cp} = $glyph_map{$gid} if exists $glyph_map{$gid};
+        }
+    }
+}
+
 sub fix_hdmx {
     my ($self) = @_;
     my $font = $self->{font};
@@ -1366,6 +1449,8 @@ sub subset {
 
     $self->{num_glyphs_old} = $font->{maxp}{numGlyphs};
 
+    $self->fold_gsub($options->{fold_features})
+        if $options->{fold_features};
 
     my $fsType = $font->{'OS/2'}{fsType};
     warn "fsType is $fsType - subsetting and embedding might not be permitted by the license\n" if $fsType != 0;

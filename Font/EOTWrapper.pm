@@ -47,7 +47,7 @@ sub convert {
     open my $out, '>', $out_fn or die "Failed to open $out_fn: $!";
     binmode $out;
 
-    $font->{name}->read;
+    $font->{name}->read if $font->{name};
 
     my $os2 = $font->{'OS/2'};
     $os2->read;

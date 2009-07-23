@@ -593,6 +593,55 @@ sub remove_unwanted_glyphs {
 }
 
 
+# Only the platform=3 encoding=1 cmap is really needed
+# (for Windows, OS X, Linux), so save space (and potentially
+# enhance cross-platformness) by stripping out all the others.
+# (But keep platform=3 encoding=10 too, for UCS-4 characters.)
+# (And Opera 10 on OS X wants one with platform=0 too.)
+sub strip_cmap {
+    my ($self) = @_;
+    my $font = $self->{font};
+
+    if (not grep { $_->{Platform} == 3 and $_->{Encoding} == 1 } @{$font->{cmap}{Tables}}) {
+        warn "No cmap found with platform=3 encoding=1 - the font is likely to not work on Windows.\n";
+        # Stop now, instead of stripping out all of the cmap tables
+        return;
+    }
+
+    my @matched_tables = grep {
+            ($_->{Platform} == 3 and ($_->{Encoding} == 1 || $_->{Encoding} == 10))
+            or ($_->{Platform} == 0)
+        } @{$font->{cmap}{Tables}};
+
+    $font->{cmap}{Tables} = \@matched_tables;
+}
+
+# Only the platform=3 encoding=1 names are really needed
+# (for Windows, OS X, Linux), so save space (and potentially
+# enhance cross-platformness) by stripping out all the others.
+sub strip_name {
+    my ($self) = @_;
+    my $font = $self->{font};
+
+    for my $id (0..$#{$font->{name}{strings}}) {
+        my $str = $font->{name}{strings}[$id];
+        next if not $str;
+        my $plat = 3;
+        my $enc = 1;
+        my $langs = $str->[$plat][$enc];
+        if (not $langs) {
+            warn "No name found with id=$id with platform=3 encoding=1 - the font is likely to not work on Windows.\n"
+                unless $id == 18; # warn except for some Mac-specific names
+            return;
+        }
+        $font->{name}{strings}[$id] = [];
+        $font->{name}{strings}[$id][$plat][$enc] = $langs;
+        # NOTE: this keeps all the languages for each string, which is
+        # potentially wasteful if there are lots (but in practice most fonts
+        # seem to only have English)
+    }
+}
+
 sub fix_cmap {
     my ($self) = @_;
     my $font = $self->{font};
@@ -678,6 +727,10 @@ sub fix_os_2 { # Must come after cmap, hmtx, hhea, GPOS, GSUB
 sub fix_post {
     my ($self) = @_;
     my $font = $self->{font};
+
+    if ($font->{post}{FormatType} == 0) {
+        warn "Invalid 'post' table type. (If you're using the obfuscate-font.pl script, make sure it comes *after* the subsetting.)\n";
+    }
 
     # Update PostScript name mappings for new glyph ids
     if ($font->{post}{VAL}) {
@@ -1454,6 +1507,9 @@ sub subset {
 
     my $fsType = $font->{'OS/2'}{fsType};
     warn "fsType is $fsType - subsetting and embedding might not be permitted by the license\n" if $fsType != 0;
+
+    $self->strip_cmap;
+    $self->strip_name;
 
     $self->find_codepoint_glyph_mappings;
     $self->find_wanted_glyphs($chars);

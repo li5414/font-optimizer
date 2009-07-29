@@ -962,7 +962,7 @@ sub fix_gpos {
                 return 0 if $self->empty_coverage($sub->{COVERAGE});
             }
 
-            if ($sub->{RULES} and not
+            if ($sub->{RULES} and $sub->{COVERAGE} and not
                     # Skip cases where RULES is indexed by CLASS, not COVERAGE
                     (($lookup->{TYPE} == 2 or
                       $lookup->{TYPE} == 7 or

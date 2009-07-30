@@ -30,6 +30,8 @@ use Font::TTF::Font;
 use Encode;
 
 use constant TTEMBED_SUBSET => 0x00000001;
+use constant TTEMBED_TTCOMPRESSED => 0x00000004;
+use constant TTEMBED_XORENCRYPTDATA => 0x10000000;
 use constant DEFAULT_CHARSET => 0x01;
 
 sub convert {
@@ -84,6 +86,50 @@ sub convert {
     $out->print($font_data);
 
     $font->release;
+}
+
+sub extract {
+    my ($in_fn, $out_fn) = @_;
+
+    my $eot_data = do {
+        open my $fh, $in_fn or die "Failed to open $in_fn: $!";
+        binmode $fh;
+        local $/;
+        <$fh>
+    };
+
+    die "Error: EOT too small" if length $eot_data < 16;
+
+    my ($eot_size, $font_data_size, $version, $flags) = unpack VVVV => substr $eot_data, 0, 16;
+
+    die "Error: Invalid EOTSize ($eot_size, should be ".(length $eot_data).")" if $eot_size != length $eot_data;
+    die "Error: Invalid Version ($version)" if not ($version == 0x00010000 or $version == 0x00020001 or $version == 0x00020002);
+    die "Error: Can't handle compressed fonts" if $flags & TTEMBED_TTCOMPRESSED;
+
+    # Skip the header fields
+    my $rest = substr $eot_data, 16+66;
+
+    my ($family_name, $style_name, $version_name, $full_name, $rest2) = unpack 'v/a* xx v/a* xx v/a* xx v/a* a*' => $rest;
+
+    my $font_data;
+    if ($version == 0x00010000) {
+        $font_data = $rest2;
+    } elsif ($version == 0x00020001) {
+        my ($root, $data) = unpack 'xx v/a* a*' => $rest2;
+        $font_data = $data;
+    } elsif ($version == 0x00020002) {
+        my ($root, $root_checksum, $eudc_codepage, $signature, $eudc_flags, $eudc_font, $data)
+            = unpack 'xx v/a* V V xx v/a* V v/a* a*' => $rest2;
+        $font_data = $data;
+    }
+
+    if ($flags & TTEMBED_XORENCRYPTDATA) {
+        $font_data ^= ("\x50" x length $font_data);
+    }
+
+    open my $fh, '>', $out_fn or die "Failed to open $out_fn: $!";
+    binmode $fh;
+    print $fh $font_data;
 }
 
 # sub rootStringChecksum {

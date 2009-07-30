@@ -971,7 +971,10 @@ sub fix_gpos {
                 ) {
                 # There's a RULES array per COVERAGE entry, so
                 # shuffle them around to match the new COVERAGE
-                die unless @{$sub->{RULES}} == $old_coverage_count;
+                if (@{$sub->{RULES}} != $old_coverage_count) {
+                    die "Internal error: RULES ($sub->{RULES}) does not match COVERAGE ($sub->{COVERAGE}) -- "
+                        . @{$sub->{RULES}} . " vs $old_coverage_count.";
+                }
                 $sub->{RULES} = [ map $sub->{RULES}[$_], @coverage_map ];
             }
 

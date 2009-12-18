@@ -24,6 +24,7 @@ Usage:
 
 Options:
   --verbose, -v         print various details about the font
+  At least one of the following is required:
   --all                 activate all of the options below
   --names               strip font name strings
   --post                strip PostScript glyph names
@@ -79,7 +80,7 @@ sub strip_post {
 
     # Replace it with the minimum necessary to work in browsers
     # (particularly Opera is a bit fussy)
-    my $data = pack NNnnNNNNN => 0, 0,  0, 0,  0, 0, 0, 0, 0;
+    my $data = pack NNnnNNNNN => 0x10000, 0,  0, 0,  0, 0, 0, 0, 0;
     $font->{post} = new Font::TTF::Table(dat => $data);
 }
 

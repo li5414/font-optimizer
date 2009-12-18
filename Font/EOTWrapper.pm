@@ -103,7 +103,7 @@ sub extract {
     my ($eot_size, $font_data_size, $version, $flags) = unpack VVVV => substr $eot_data, 0, 16;
 
     die "Error: Invalid EOTSize ($eot_size, should be ".(length $eot_data).")" if $eot_size != length $eot_data;
-    die "Error: Invalid Version ($version)" if not ($version == 0x00010000 or $version == 0x00020001 or $version == 0x00020002);
+    die "Error: Invalid Version ($version)" if not ($version == 0x00020000 or $version == 0x00020001 or $version == 0x00020002);
     die "Error: Can't handle compressed fonts" if $flags & TTEMBED_TTCOMPRESSED;
 
     # Skip the header fields
@@ -112,7 +112,7 @@ sub extract {
     my ($family_name, $style_name, $version_name, $full_name, $rest2) = unpack 'v/a* xx v/a* xx v/a* xx v/a* a*' => $rest;
 
     my $font_data;
-    if ($version == 0x00010000) {
+    if ($version == 0x00020000) { # not 0x00010000 - spec is wrong (http://lists.w3.org/Archives/Public/www-font/2009JulSep/0862.html)
         $font_data = $rest2;
     } elsif ($version == 0x00020001) {
         my ($root, $data) = unpack 'xx v/a* a*' => $rest2;
